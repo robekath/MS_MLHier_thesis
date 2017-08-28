@@ -3,24 +3,25 @@
 #  THESIS: Random Forest (RF)
 #
 #  Author: Katie Roberts
-#  Last edited: 1/13/2017
+#  Last edited: 8/28/2017
 # 
 # 
 #  Goals: 
 #  1. Create function to sample one level2 per level1 (giving unique/uncorrelated records)
 #     Steps:
 #         i) Randomly sample 1 record per level1 data
-#        ii) Use sample to create training(60%) and testing(40%) data
-#       iii) Grow a forest of (500) trees on training set
-#        iv) Predict outcome of testing set using forest
-#         v) Capture the predicted responses on the testing set along with both hierarchy levels
-#        vi) Repeat steps i-v 100 times - Will now have multiple predicted responses per unique level1 and level2
-#       vii) Take majority vote per unique level1 and level2 to get final outcome
+#        ii) Grow a forest of (500) trees
+#       iii) Predict outcome using forest
+#        iv) Capture the predicted responses along with both hierarchy levels
+#         v) Repeat steps i-v 100 times - Will now have multiple predicted responses per unique level1 and level2
+#        vi) Take majority vote per unique level1 and level2 to get final outcome
 #  2. Create testing iris data hierarchy
 #  3. Test function with manipulated iris data
+#         i) Look at results and confusion matrix
+#  4. Additional ROC Curve code
 #
 # Packages used:
-# "randomForest", "caret", "plyr"
+# "randomForest", "caret", "plyr" 
 # Note from randomForest() documentation:
 # "Any ties are broken at random, so if this is undesirable, avoid it by using odd number ntree in randomForest()."
 #
@@ -43,14 +44,13 @@
 #
 #________________________________________________________________________
 #
-#install.packages("randomForest")
-#install.packages("plyr")
-#install.packages("caret")
-
-library(randomForest)
-library(plyr)
-library(caret)
-
+#Packages needed
+list.of.packages <- c("randomForest", "plyr", "caret")
+#Install packaged if they are not already installed
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+#Load packages
+lapply(list.of.packages, require, character.only = TRUE)
 
 #----------------------------------------------------------------
 # 1. Function to sample one level2 per level1
@@ -62,6 +62,14 @@ library(caret)
 #L2hier: this is the second level hierarchical variable from the dataset (node)
 
 mult.rf <- function(formula = formula(data), data = sys.frame(sys.parent()), L1hier,L2hier, x.rep=100,...){
+  # #the following code chunk meant for testing
+  # formula = Species ~ Sepal.Length + Sepal.Width + Petal.Length + Petal.Width
+  # data=my.iris
+  # L1hier="level1"
+  # L2hier="level2"
+  # x.rep=25
+  # outcome <- formula[[2]]
+  # outcome.loc <- which(names(data)==outcome) #column location for L1Hier
   
   l1h.loc <- which(names(data)==L1hier) #column location for L1Hier
   l2h.loc <- which(names(data)==L2hier) #column location for L2Hier
@@ -70,7 +78,7 @@ mult.rf <- function(formula = formula(data), data = sys.frame(sys.parent()), L1h
   #create placeholder lists to store data for each iteration
   outdata = list()
   outrfmodel = list()
-  outplot = list()
+  #outplot = list()
   outimportance = list()
   outrfconf = list()
   outconfbyClass = list()
@@ -79,31 +87,27 @@ mult.rf <- function(formula = formula(data), data = sys.frame(sys.parent()), L1h
     #sample one level2 per level1
     require(plyr)
     newdata <- ddply(data,.(data[,l1h.loc]),function(x) x[sample(nrow(x),1),])
-    #Sample 60/40 training/testing data
-    sample.ind <- sample(2, nrow(newdata),replace = T,prob = c(0.6,0.4))
-    training <- newdata[sample.ind==1,]
-    testing <- newdata[sample.ind==2,]
-    
+
     #Grow a (500) tree forest
     library(randomForest)
-    samp.rf <- randomForest(formula, data=training,ntrees=500,importance=TRUE)
+    samp.rf <- randomForest(formula, data=newdata,ntrees=500,importance=TRUE)
     outrfmodel[[i]] <- samp.rf #save the samp.rf for each of the x iterations
-    outplot[[i]] <- plot(samp.rf) #save plot for each x iteration for OOB error
+    #outplot[[i]] <- plot(samp.rf) #save plot for each x iteration for OOB error
     outimportance[[i]] <- importance(samp.rf) #save var importance for each iteration
     
     # Predicting response variable on testing data
-    testing$predicted.response <- predict(samp.rf,testing)
-    testing$predicted.probs <- predict(samp.rf,testing,type='prob')
+    newdata$predicted.response <- predict(samp.rf)
+    newdata$predicted.probs <- predict(samp.rf,type='prob')
     
     # Capture the confusion matrix and the matrix info by class
-    outcome.loc <- which(names(testing)==outcome) #column location for outcome/response
+    outcome.loc <- which(names(newdata)==outcome) #column location for outcome/response
     library(caret)
-    outrfconf[[i]] <- confusionMatrix(data=testing$predicted.response,
-                                      reference=testing[,outcome.loc])
+    outrfconf[[i]] <- confusionMatrix(data=newdata$predicted.response,
+                                      reference=newdata[,outcome.loc])
     outconfbyClass[[i]] <- outrfconf[[i]]$byClass
     
     #subset into data with only L1hier, L2hier, and rf.outcomes
-    tousedata <- testing[,c(L1hier, L2hier, "predicted.response", "predicted.probs")]
+    tousedata <- newdata[,c(L1hier, L2hier, "predicted.response", "predicted.probs")]
     tousedata$repnum <- i
     outdata[[i]] <- tousedata
   } #end for loop
@@ -114,8 +118,8 @@ mult.rf <- function(formula = formula(data), data = sys.frame(sys.parent()), L1h
   sorted.simple_data <- simple_data[with(simple_data, order(simple_data[,l1h.loc.b], simple_data[,l2h.loc.b])), ]
   
   #loop through the unique combinations of level1 and node to come up with the majority vote and output a dataset with the majority vote predictions from all the forests
-  final.data <- data.frame(matrix(ncol = 3, nrow = 0))
-  x <- c("l1h", "l2h", "maj.vote.pred")
+  final.data <- data.frame(matrix(ncol = 4, nrow = 0))
+  x <- c("l1h", "l2h", "maj.vote.pred", "avg.prob")
   colnames(final.data) <- x
   
   l1h.loc.c <- which(names(sorted.simple_data)==L1hier)
@@ -124,11 +128,16 @@ mult.rf <- function(formula = formula(data), data = sys.frame(sys.parent()), L1h
   m=1 #set starting index for rows in final data
   
   for (i in unique(sorted.simple_data[,l1h.loc.c])) {
+    #i=1 #for testing
     uniq.data <- sorted.simple_data[(sorted.simple_data[,l1h.loc.c]==i),]
     for (j in unique(uniq.data[,l2h.loc.c])){
       uniq.data.b <- uniq.data[(uniq.data[,l2h.loc.c]==j),]
       #majority vote
       maj.vote.pred <- names(which.max(table(uniq.data.b$predicted.response))) 
+      
+      #average of predicted probs Metastatic
+      avg.prob <- names(which.max(table(t(uniq.data.b$predicted.probs[,1]))))
+      avg.prob <- mean(uniq.data.b$predicted.probs[,1])
       
       l1h.loc.d <- which(names(uniq.data.b)==L1hier)
       l2h.loc.d <- which(names(uniq.data.b)==L2hier)
@@ -136,6 +145,7 @@ mult.rf <- function(formula = formula(data), data = sys.frame(sys.parent()), L1h
       final.data[m,]$l1h <- i
       final.data[m,]$l2h <- j
       final.data[m,]$maj.vote.pred <- maj.vote.pred
+      final.data[m,]$avg.prob <- avg.prob
       
       final.data <- rbind(final.data, final.data[m,])
       
@@ -151,20 +161,19 @@ mult.rf <- function(formula = formula(data), data = sys.frame(sys.parent()), L1h
   final.output <- merge(x=data, y=final, by.x=c(L1hier,L2hier), by.y=c("l1h", "l2h"), all=T)
   
   # return list of lists
-  outList <- list("Final.dat" = final.output, "RF.models" = outrfmodel, "pred.dats"=outdata, "oob.plot"=outplot,
-                  "var.imp"=outimportance, "confusion"=outrfconf, "conf.byClass"=outconfbyClass)
+  # outList <- list("Final.dat" = final.output, "RF.models" = outrfmodel, "pred.dats"=outdata, "oob.plot"=outplot, "var.imp"=outimportance, "confusion"=outrfconf, "conf.byClass"=outconfbyClass)
+  
+  outList <- list("Final.dat" = final.output, "RF.models" = outrfmodel, "pred.dats"=outdata, "var.imp"=outimportance, "confusion"=outrfconf, "conf.byClass"=outconfbyClass)
   
   return(outList)
   
 }#end function
 
 
-
 #-----------------------------------------------------------------
 # 2. Create testing iris data hierarchy
 #-----------------------------------------------------------------
-# NOTE: this hierarchy is generated to test the functionality of the code ONLY. There is no correlation
-# here so the results should be less than interesting
+# NOTE: this hierarchy is generated to test the functionality of the code ONLY. There is no correlation here so the results should be less than interesting
 data(iris)
 my.iris <- iris
 table(my.iris$Species)
@@ -210,10 +219,9 @@ rf.iris.hier[1] #just gets out the final data with majority vote predictions
 str(rf.iris.hier[1]$Final.dat) #structure of Final data with majority vote column
 str(rf.iris.hier[2]$RF.models[1]) #structure of the first RF model (of x.rep models)
 str(rf.iris.hier[3]$pred.dats[1]) #structure of Pred data for first model
-str(rf.iris.hier[4]$oob.plot[1]) #structure of OOB error for first model
-str(rf.iris.hier[5]$var.imp[1]) #structure of variable importance for first model
-str(rf.iris.hier[6]$confusion[1]) #structure of confusion matrix for first model
-str(rf.iris.hier[7]$conf.byClass[1]) #structure of confusion matrix by class for first model
+str(rf.iris.hier[4]$var.imp[1]) #structure of variable importance for first model
+str(rf.iris.hier[5]$confusion[1]) #structure of confusion matrix for first model
+str(rf.iris.hier[6]$conf.byClass[1]) #structure of confusion matrix by class for first model
 
 rf.iris.dat <- rf.iris.hier[1]$Final.dat
 rf.iris.dat$maj.vote.pred <- as.factor(rf.iris.dat$maj.vote.pred)
@@ -228,6 +236,27 @@ rf.confusion <- confusionMatrix(data=rf.iris.dat$maj.vote.pred,
 rf.confusion
 rfmodel.accuracy<-rf.confusion$overall[1]
 rfmodel.accuracy
+
+#-------------------------------------------------------------------------
+# Build ROC Curve
+# NOTE AGAIN: The Iris data is fabricated leading to uninformative results
+#-------------------------------------------------------------------------
+apost.prob <- rf.iris.hier[1]$Final.dat$avg.prob #for ROC Curve
+#ROC curve
+library(pROC)
+# Plot:
+rocobj <- plot.roc(my.iris$Species, apost.prob, print.auc=T, ci=T,
+                   print.thres="best", print.thres.best.method="youden")
+title(main = "Random Forest ROC Curve - Hier", line = 3)
+
+
+#Further information:
+optimals <- data.frame(t(coords(rocobj,best.method="youden", rocobj$thresholds, "thr", ret=c("thr","se", "sp"))))
+rownames(optimals) <- NULL
+optimals$youden <- optimals$sensitivity + optimals$specificity -1
+#optimals
+maxyouden <- optimals[which(optimals$youden == max(optimals$youden)), ]
+maxyouden
 
 
 
